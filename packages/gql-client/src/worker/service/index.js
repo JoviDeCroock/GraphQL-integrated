@@ -1,38 +1,72 @@
+const url = 'http://localhost:3000/graphql';
 const CACHE_NAME = 'Gql-Client-SW';
+const CACHE_LOCATIONS = [
+  './index.html',
+  '/index.html',
+  '/main.js'
+];
+
+function log(msg) {
+  console.log(`[GQL-SW] - `, msg);
+}
 
 self.addEventListener('install', function(event) {
-  console.log('installing');
+  log('Installing');
+   // e.waitUntil(self.skipWaiting());
   // Cache persistence idea
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(function(cache) {
-        console.log('Opened cache', cache);
-        return cache.addAll(['/', '/src', 'http://localhost:3000/graphql']);
+        log('Opened cache');
+        return cache.addAll(CACHE_LOCATIONS);
       })
   );
 });
 
-self.addEventListener('fetch', function(event) {
-  console.log('got fetch', event.request);
-  event.respondWith(
-    caches.match(event.request)
-      .then(function(response) {
-        console.log(event.request, response);
-        // Cache hit - return response and refetch
-        if (response) {
-          handleData(event.request);
-          return response;
+self.addEventListener('activate', function(e) {
+  log('Activated');
+  // e.waitUntil(self.clients.claim());
+  e.waitUntil(
+    caches.keys().then(function(keyList) {
+      return Promise.all(keyList.map(function(key) {
+        if (key!==CACHE_NAME) {
+          log(`Removing old cache ${key}`);
+          return caches.delete(key);
         }
-        return fetch(event.request).then((res) => {
-          console.log('got response');
-          if (!response || response.status > 300) return response;
-          const responseToCache = response.clone();
-          // Only cache upon success
-          console.log('opening cache');
-          caches.open(CACHE_NAME).then(c => c.put(event.request, responseToCache));
-          return response;
-        });
-      }
-    )
+      }));
+    })
   );
+  return self.clients.claim();
+});
+
+function writeToCache(event, response) {
+  log('opening cache');
+  caches.open(CACHE_NAME).then(c => c.put(event.request, response.clone()));
+  log('updated cache');
+}
+
+function handleFetch(event) {
+  return fetch(event.request).then(resp => {
+    log('got response');
+    if (!resp || resp.status > 300) return resp;
+    writeToCache(event, resp);
+    return resp;
+  });
+}
+
+self.addEventListener('fetch', function(event) {
+  if (event.request.url === url) {
+    log(event.request);
+    event.respondWith(
+      caches.match(event.request)
+        .then(res => {
+          if (res) {
+            handleFetch(event);
+            return res;
+          }
+          return handleFetch(event);
+        }
+      )
+    );
+  }
 });
